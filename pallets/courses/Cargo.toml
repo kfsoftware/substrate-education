@@ -12,6 +12,9 @@ repository = 'https://github.com/substrate-developer-hub/substrate-node-template
 [package.metadata.docs.rs]
 targets = ['x86_64-unknown-linux-gnu']
 
+[dependencies.enumflags2]
+version = "0.6.3"
+
 [dependencies.pallet-assets]
 default-features = false
 git = 'https://github.com/paritytech/substrate.git'
@@ -87,6 +90,7 @@ std = [
     'codec/std',
     'sp-io/std',
     'sp-std/std',
+    "enumflags2/serde",
     'sp-runtime/std',
     'scale-info/std',
     'frame-support/std',

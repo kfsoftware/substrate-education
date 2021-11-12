@@ -102,7 +102,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
     //   `spec_version`, and `authoring_version` are the same between Wasm and native.
     // This value is set to 100 to notify Polkadot-JS App (https://polkadot.js.org/apps) to use
     //   the compatible custom types.
-    spec_version: 102,
+    spec_version: 103,
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 1,
@@ -231,32 +231,6 @@ pub mod currency {
     pub const fn deposit(items: u32, bytes: u32) -> Balance {
         (items as Balance) * CENTS + (bytes as Balance) * BYTE_FEE
     }
-}
-
-
-parameter_types! {
-	pub const AssetDeposit: Balance = 100 * currency::DOLLARS;
-	pub const ApprovalDeposit: Balance = 1 * currency::DOLLARS;
-	pub const StringLimit: u32 = 50;
-	pub const MetadataDepositBase: Balance = 10 * currency::DOLLARS;
-	pub const MetadataDepositPerByte: Balance = 1 * currency::DOLLARS;
-}
-
-impl pallet_assets::Config for Runtime {
-    type Event = Event;
-    type Balance = u64;
-    type AssetId = u32;
-    type Currency = Balances;
-    type ForceOrigin = EnsureRoot<AccountId>;
-    type AssetDeposit = AssetDeposit;
-    type MetadataDepositBase = MetadataDepositBase;
-    type MetadataDepositPerByte = MetadataDepositPerByte;
-    type ApprovalDeposit = ApprovalDeposit;
-    type StringLimit = StringLimit;
-    type Freezer = ();
-    type Extra = ();
-    // type WeightInfo = pallet_assets::weights::SubstrateWeight<Runtime>;
-    type WeightInfo = ();
 }
 
 parameter_types! {
@@ -514,6 +488,8 @@ impl pallet_kitties::Config for Runtime {
 parameter_types! {
   // One can own at most 9,999 Kitties
   pub const MaxCourseOwned: u32 = 9999;
+  pub const MaxClassMetadata: u32 = 1024;
+  pub const MaxTokenMetadata: u32 = 1024;
 }
 
 /// Configure the pallet-kitties in pallets/kitties.
@@ -521,7 +497,9 @@ impl pallet_courses::Config for Runtime {
     type Event = Event;
     type Currency = Balances;
     type CourseRandomness = RandomnessCollectiveFlip;
-    type MaxCourseOwned = MaxCourseOwned; // <- add this line
+    type MaxCourseOwned = MaxCourseOwned;
+    type MaxClassMetadata = MaxClassMetadata;
+    type MaxTokenMetadata = MaxTokenMetadata;
 }
 
 
@@ -542,7 +520,6 @@ construct_runtime!(
 		Sudo: pallet_sudo::{Pallet, Call, Config<T>, Storage, Event<T>} = 7,
         Scheduler: pallet_scheduler::{Pallet, Call, Storage, Event<T>} = 8,
         NodeAuthorization: pallet_node_authorization::{Pallet, Call, Storage, Event<T>, Config<T>} = 9,
-		Assets: pallet_assets::{Pallet, Call, Storage, Event<T>, Config<T>} = 10,
 
         Council: pallet_collective::<Instance1>::{Pallet, Call, Storage, Origin<T>, Event<T>, Config<T>} = 20,
 		TechnicalCommittee: pallet_collective::<Instance2>::{Pallet, Call, Storage, Origin<T>, Event<T>, Config<T>} = 21,

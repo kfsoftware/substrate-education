@@ -170,7 +170,6 @@ fn testnet_genesis(
         courses: CoursesConfig {
             courses: vec![],
         },
-        assets: Default::default(),
         treasury: Default::default(),
         council: Default::default(),
         technical_committee: Default::default(),
