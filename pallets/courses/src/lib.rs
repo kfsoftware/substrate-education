@@ -13,11 +13,18 @@ pub mod pallet {
         traits::{Randomness, Currency, tokens::ExistenceRequirement},
         transactional,
     };
+    use frame_support::traits::tokens::AssetId;
     use sp_io::hashing::blake2_128;
     use scale_info::TypeInfo;
 
     #[cfg(feature = "std")]
     use serde::{Deserialize, Serialize};
+    use frame_system::RawOrigin;
+    use sp_runtime::traits::Bounded;
+    use sp_runtime::{
+        traits::{CheckedSub, SaturatedConversion, StaticLookup, Zero},
+        DispatchError, Perbill, Percent,
+    };
 
     type AccountOf<T> = <T as frame_system::Config>::AccountId;
     type BalanceOf<T> =
@@ -29,24 +36,26 @@ pub mod pallet {
     pub struct Course<T: Config> {
         pub name: Vec<u8>,
         pub owner: AccountOf<T>,
+        pub image_url: Vec<u8>,
+        pub category: Vec<u8>,
+        pub description: Vec<u8>,
     }
 
-    // Struct for holding Episode information.
+    // Struct for holding Lecture information.
     #[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
     #[scale_info(skip_type_params(T))]
-    pub struct Episode<T: Config> {
+    pub struct Lecture<T: Config> {
         pub name: Vec<u8>,
         pub contents: Vec<u8>,
         pub owner: AccountOf<T>,
     }
 
-    // Struct for holding EpisodeCompleted information.
+    // Struct for holding LectureCompleted information.
     #[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
     #[scale_info(skip_type_params(T))]
-    pub struct EpisodeCompleted<T: Config> {
+    pub struct LectureCompleted<T: Config> {
         pub owner: AccountOf<T>,
     }
-
 
     #[pallet::pallet]
     #[pallet::generate_store(trait Store)]
@@ -54,7 +63,7 @@ pub mod pallet {
 
     // Configure the pallet by specifying the parameters and types on which it depends.
     #[pallet::config]
-    pub trait Config: frame_system::Config {
+    pub trait Config: frame_system::Config + pallet_assets::Config {
         /// Because this pallet emits events, it depends on the runtime's definition of an event.
         type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
 
@@ -115,27 +124,36 @@ pub mod pallet {
     pub(super) type CourseCnt<T: Config> = StorageValue<_, u64, ValueQuery>;
 
     #[pallet::storage]
+    #[pallet::getter(fn mint_assets)]
+    /// Keeps track of the assets that can be generated
+    pub(super) type MintAssets<T: Config> = StorageValue<_, Vec<T::AssetId>, ValueQuery>;
+
+    #[pallet::storage]
+    #[pallet::getter(fn get_nonce)]
+    pub(super) type Nonce<T: Config> = StorageValue<_, u64, ValueQuery>;
+
+    #[pallet::storage]
     #[pallet::getter(fn courses)]
     /// Stores a Course's unique traits, owner and price.
     pub(super) type Courses<T: Config> = StorageMap<_, Twox64Concat, T::Hash, Course<T>>;
 
     #[pallet::storage]
-    #[pallet::getter(fn episodes)]
-    /// Stores a Episode unique traits, owner and price.
-    pub(super) type Episodes<T: Config> = StorageDoubleMap<_, Twox64Concat, T::Hash, Twox64Concat, T::Hash, Episode<T>>;
+    #[pallet::getter(fn lectures)]
+    /// Stores a Lecture unique traits, owner and price.
+    pub(super) type Lectures<T: Config> = StorageDoubleMap<_, Twox64Concat, T::Hash, Twox64Concat, T::Hash, Lecture<T>>;
 
 
     #[pallet::storage]
-    #[pallet::getter(fn episodes_completed)]
-    /// Stores a Episode unique traits, owner and price.
-    pub(super) type EpisodesCompleted<T: Config> = StorageNMap<
+    #[pallet::getter(fn lectures_completed)]
+    /// Stores a Lecture unique traits, owner and price.
+    pub(super) type LecturesCompleted<T: Config> = StorageNMap<
         _,
         (
             NMapKey<Twox64Concat, T::AccountId>, // Account
             NMapKey<Twox64Concat, T::Hash>, // Course
-            NMapKey<Twox64Concat, T::Hash>, // Episode
+            NMapKey<Twox64Concat, T::Hash>, // Lecture
         ),
-        EpisodeCompleted<T>,
+        LectureCompleted<T>,
         OptionQuery,
     >;
 
@@ -150,7 +168,7 @@ pub mod pallet {
     // Our pallet's genesis configuration.
     #[pallet::genesis_config]
     pub struct GenesisConfig<T: Config> {
-        pub courses: Vec<(T::AccountId, Vec<u8>)>,
+        pub courses: Vec<(T::AccountId, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>)>,
     }
 
     // Required to implement default for GenesisConfig.
@@ -165,8 +183,8 @@ pub mod pallet {
     impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
         fn build(&self) {
             // When building a course from genesis config, we require the dna and gender to be supplied.
-            for (acct, name) in &self.courses {
-                let _ = <Pallet<T>>::mint(acct, name.clone());
+            for (acct, name, category, image_url, description) in &self.courses {
+                let _ = <Pallet<T>>::mint(acct, name.clone(), category.clone(), image_url.clone(), description.clone());
             }
         }
     }
@@ -178,43 +196,78 @@ pub mod pallet {
         ///
         /// The actual course creation is done in the `mint()` function.
         #[pallet::weight(100)]
-        pub fn create_course(origin: OriginFor<T>, name: Vec<u8>) -> DispatchResult {
+        pub fn create_course(
+            origin: OriginFor<T>,
+            name: Vec<u8>,
+            category: Vec<u8>,
+            image_url: Vec<u8>,
+            description: Vec<u8>,
+        ) -> DispatchResult {
             let sender = ensure_signed(origin)?;
-
-            let course_id = Self::mint(&sender, name)?;
+            let course_id = Self::mint(&sender, name, category, image_url, description)?;
             log::info!("A course is born with ID Changed1: {:?}.", course_id);
             Self::deposit_event(Event::Created(sender, course_id));
-            EpisodesCompleted::
             Ok(())
         }
 
-        /// Set episode completed for a course.
+        /// Create a new unique course.
+        ///
+        /// The actual course creation is done in the `mint()` function.
         #[pallet::weight(100)]
-        pub fn complete_episode(origin: OriginFor<T>, course_id: T::Hash, episode_id: T::Hash) -> DispatchResult {
-            let sender = ensure_signed(origin)?;
+        pub fn set_assets(
+            origin: OriginFor<T>,
+            asset_ids: Vec<T::AssetId>,
+        ) -> DispatchResult {
+            let sender = ensure_root(origin)?;
+            <MintAssets<T>>::put(
+                asset_ids.clone()
+            );
+            // <LecturesCompleted<T>>::insert((sender.clone(), course_id, lecture_id), lecture_completed);
+            log::info!("Setting asset ids: {:?}.", asset_ids.clone());
+            Ok(())
+        }
 
-            let episode = EpisodeCompleted::<T> {
+        /// Set lecture completed for a course.
+        #[pallet::weight(100)]
+        pub fn complete_lecture(origin: OriginFor<T>, course_id: T::Hash, lecture_id: T::Hash) -> DispatchResult {
+            let sender = ensure_signed(origin.clone())?;
+            let lecture_completed = LectureCompleted::<T> {
                 owner: sender.clone(),
             };
-            <EpisodesCompleted<T>>::insert((sender.clone(), course_id, episode_id), episode);
+            let admin = <T::Lookup as StaticLookup>::unlookup(sender.clone());
+            let account_id = sender.clone();
+            let random_hash = Self::_random_hash(&account_id);
+            let asset_ids = <MintAssets<T>>::get();
+            let asset_id_tmp = asset_ids[0];
+            let encoded = Encode::encode(&asset_id_tmp);
+            let asset_id = T::AssetId::decode(&mut &encoded[..]).unwrap();
+
+            let amount = T::Balance::from(1u8);
+            match pallet_assets::Pallet::<T>::mint_into(origin.clone(), asset_id, admin, amount) {
+                Ok(_) => {}
+                Err(error) => {
+                    log::info!("Error: {:?}.", error.clone());
+                }
+            }
+            <LecturesCompleted<T>>::insert((sender.clone(), course_id, lecture_id), lecture_completed);
             Ok(())
         }
 
-        /// Add a episode to a course.
+        /// Add a lecture to a course.
         #[pallet::weight(100)]
-        pub fn create_episode(origin: OriginFor<T>, course_id: T::Hash, name: Vec<u8>, contents: Vec<u8>) -> DispatchResult {
+        pub fn create_lecture(origin: OriginFor<T>, course_id: T::Hash, name: Vec<u8>, contents: Vec<u8>) -> DispatchResult {
             let sender = ensure_signed(origin)?;
 
             // ACTION #1a: Checking Course owner
             ensure!(Self::is_course_owner(&course_id, &sender)?, <Error<T>>::NotCourseOwner);
-            let episode = Episode::<T> {
+            let lecture = Lecture::<T> {
                 name,
                 contents,
                 owner: sender.clone(),
             };
-            let episode_id = T::Hashing::hash_of(&episode);
+            let lecture_id = T::Hashing::hash_of(&lecture);
 
-            <Episodes<T>>::insert(course_id, episode_id, episode);
+            <Lectures<T>>::insert(course_id, lecture_id, lecture);
             Ok(())
         }
 
@@ -247,16 +300,21 @@ pub mod pallet {
     }
 
     //** Our helper functions.**//
-
     impl<T: Config> Pallet<T> {
         // Helper to mint a Course.
         pub fn mint(
             owner: &T::AccountId,
             name: Vec<u8>,
+            category: Vec<u8>,
+            image_url: Vec<u8>,
+            description: Vec<u8>,
         ) -> Result<T::Hash, Error<T>> {
             let course = Course::<T> {
                 name,
                 owner: owner.clone(),
+                category,
+                image_url,
+                description,
             };
 
             let course_id = T::Hashing::hash_of(&course);
@@ -274,7 +332,12 @@ pub mod pallet {
             <CourseCnt<T>>::put(new_cnt);
             Ok(course_id)
         }
+        fn _random_hash(sender: &T::AccountId) -> T::Hash {
+            let nonce = <Nonce<T>>::get();
+            let seed = T::CourseRandomness::random_seed();
 
+            T::Hashing::hash_of(&(seed, &sender, nonce))
+        }
 
         // ACTION #1b
         pub fn is_course_owner(course_id: &T::Hash, acct: &T::AccountId) -> Result<bool, Error<T>> {

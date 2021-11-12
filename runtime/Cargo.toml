@@ -123,6 +123,23 @@ git = 'https://github.com/paritytech/substrate.git'
 tag = 'monthly-2021-10'
 version = '4.0.0-dev'
 
+#[dependencies.pallet-authorship]
+#default-features = false
+#git = 'https://github.com/paritytech/substrate.git'
+#tag = 'monthly-2021-10'
+#version = '4.0.0-dev'
+
+[dependencies.pallet-treasury]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+tag = 'monthly-2021-10'
+version = '4.0.0-dev'
+
+[dependencies.pallet-collective]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+tag = 'monthly-2021-10'
+version = '4.0.0-dev'
 
 [dependencies.pallet-timestamp]
 default-features = false
@@ -242,6 +259,9 @@ std = [
     'pallet-sudo/std',
     'pallet-node-authorization/std',
     'pallet-kitties/std',
+    'pallet-collective/std',
+    'pallet-treasury/std',
+#    'pallet-authorship/std',
     'pallet-courses/std',
     'pallet-timestamp/std',
     'pallet-scheduler/std',
