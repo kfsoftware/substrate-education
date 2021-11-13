@@ -200,21 +200,6 @@ impl frame_system::Config for Runtime {
 impl pallet_randomness_collective_flip::Config for Runtime {}
 
 
-parameter_types! {
-    pub const MaxWellKnownNodes: u32 = 8;
-    pub const MaxPeerIdLength: u32 = 128;
-}
-
-impl pallet_node_authorization::Config for Runtime {
-    type Event = Event;
-    type MaxWellKnownNodes = MaxWellKnownNodes;
-    type MaxPeerIdLength = MaxPeerIdLength;
-    type AddOrigin = EnsureRoot<AccountId>;
-    type RemoveOrigin = EnsureRoot<AccountId>;
-    type SwapOrigin = EnsureRoot<AccountId>;
-    type ResetOrigin = EnsureRoot<AccountId>;
-    type WeightInfo = ();
-}
 
 pub mod currency {
     use super::Balance;
@@ -519,7 +504,6 @@ construct_runtime!(
 		TransactionPayment: pallet_transaction_payment::{Pallet, Storage} = 6,
 		Sudo: pallet_sudo::{Pallet, Call, Config<T>, Storage, Event<T>} = 7,
         Scheduler: pallet_scheduler::{Pallet, Call, Storage, Event<T>} = 8,
-        NodeAuthorization: pallet_node_authorization::{Pallet, Call, Storage, Event<T>, Config<T>} = 9,
 
         Council: pallet_collective::<Instance1>::{Pallet, Call, Storage, Origin<T>, Event<T>, Config<T>} = 20,
 		TechnicalCommittee: pallet_collective::<Instance2>::{Pallet, Call, Storage, Origin<T>, Event<T>, Config<T>} = 21,

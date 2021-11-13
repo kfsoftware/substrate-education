@@ -11,8 +11,6 @@ use sp_finality_grandpa::AuthorityId as GrandpaId;
 use sp_runtime::traits::{IdentifyAccount, Verify};
 use sp_core::OpaquePeerId;
 use serde_json::json;
-// A struct wraps Vec<u8>, represents as our `PeerId`.
-use node_kitties_runtime::NodeAuthorizationConfig; // The genesis config that serves for our pallet.
 
 // The URL for the telemetry server.
 // const STAGING_TELEMETRY_URL: &str = "wss://telemetry.polkadot.io/submit/";
@@ -91,7 +89,14 @@ pub fn development_config() -> Result<ChainSpec, String> {
 
 pub fn local_testnet_config() -> Result<ChainSpec, String> {
     let wasm_binary = WASM_BINARY.ok_or_else(|| "Development wasm not available".to_string())?;
+    let mut props: Properties = Properties::new();
 
+    let value = json!("KFS");
+    props.insert("tokenSymbol".to_string(), value);
+    let token_decimals = json!(12);
+    props.insert("tokenDecimals".to_string(), token_decimals);
+    let ss58_format = json!(2);
+    props.insert("ss58Format".to_string(), ss58_format);
     Ok(ChainSpec::from_genesis(
         // Name
         "Local Testnet",
@@ -102,7 +107,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
             testnet_genesis(
                 wasm_binary,
                 // Initial PoA authorities
-                vec![authority_keys_from_seed("Alice"), authority_keys_from_seed("Bob")],
+                vec![],
                 // Sudo account
                 get_account_id_from_seed::<sr25519::Public>("Alice"),
                 // Pre-funded accounts
@@ -130,7 +135,7 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
         // Protocol ID
         None,
         // Properties
-        None,
+        Some(props),
         // Extensions
         None,
     ))
@@ -173,17 +178,5 @@ fn testnet_genesis(
         treasury: Default::default(),
         council: Default::default(),
         technical_committee: Default::default(),
-        node_authorization: NodeAuthorizationConfig {
-            nodes: vec![
-                (
-                    OpaquePeerId(bs58::decode("12D3KooWBmAwcd4PJNJvfV89HwE48nwkRmAgo8Vy3uQEyNNHBox2").into_vec().unwrap()),
-                    endowed_accounts[0].clone()
-                ),
-                (
-                    OpaquePeerId(bs58::decode("12D3KooWQYV9dGMFoRzNStwpXztXaBUjtPqi6aU76ZgUriHhKust").into_vec().unwrap()),
-                    endowed_accounts[1].clone()
-                ),
-            ],
-        },
     }
 }
