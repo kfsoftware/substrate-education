@@ -153,30 +153,18 @@ pub mod pallet {
         TransferToSelf,
         /// Handles checking whether the Course exists.
         CourseNotExist,
+        /// Handles checking whether the Lecture exists.
+        LectureNotExist,
         /// Handles checking that the Course is owned by the account transferring, buying or setting a price for it.
         NotCourseOwner,
-        /// Ensures the Course is for sale.
-        CourseNotForSale,
-        /// Ensures that the buying price is greater than the asking price.
-        CourseBidPriceTooLow,
         /// Ensures that an account has enough funds to purchase a Course.
         NotEnoughBalance,
-
         /// No available class ID
         NoAvailableClassId,
         /// No available token ID
         NoAvailableTokenId,
-        /// Token(ClassId, TokenId) not found
-        TokenNotFound,
         /// Class not found
         ClassNotFound,
-        /// The operator is not the owner of the token and has no permission
-        NoPermission,
-        /// Can not destroy class
-        /// Total issuance is not 0
-        CannotDestroyClass,
-        /// Failed because the Maximum amount of metadata was exceeded
-        MaxMetadataExceeded,
     }
 
     #[pallet::event]
@@ -400,6 +388,17 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Add a lecture to a course.
+        #[pallet::weight(100)]
+        pub fn remove_lecture(origin: OriginFor<T>, course_id: T::Hash, lecture_id: T::Hash) -> DispatchResult {
+            let sender = ensure_signed(origin)?;
+
+            // ACTION #1a: Checking Course owner
+            ensure!(Self::is_course_owner(&course_id, &sender)?, <Error<T>>::NotCourseOwner);
+            <Lectures<T>>::remove(course_id, lecture_id);
+            Ok(())
+        }
+
         /// Set the name for a Course.
         ///
         /// Updates Course name and updates storage.
@@ -473,6 +472,12 @@ pub mod pallet {
             match Self::courses(course_id) {
                 Some(course) => Ok(course.owner == *acct),
                 None => Err(<Error<T>>::CourseNotExist)
+            }
+        }
+        pub fn lecture_exists(course_id: &T::Hash, lecture_id: &T::Hash, acct: &T::AccountId) -> Result<bool, Error<T>> {
+            match Self::lectures(course_id, lecture_id) {
+                Some(course) => Ok(course.owner == *acct),
+                None => Err(<Error<T>>::LectureNotExist)
             }
         }
     }
