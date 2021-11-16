@@ -1,7 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub use pallet::*;
-
+mod rng;
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -15,15 +15,15 @@ pub mod pallet {
     };
     use sp_io::hashing::blake2_128;
     use scale_info::TypeInfo;
-
     #[cfg(feature = "std")]
     use serde::{Deserialize, Serialize};
     use frame_system::RawOrigin;
-    use sp_runtime::traits::Bounded;
+    use sp_runtime::traits::{BlakeTwo256, Bounded};
     use sp_runtime::{
         traits::{CheckedSub, AtLeast32BitUnsigned, SaturatedConversion, StaticLookup, One, Zero},
         DispatchError, Perbill, Percent, ArithmeticError,
     };
+    use crate::rng::RandomNumberGenerator;
 
     type AccountOf<T> = <T as frame_system::Config>::AccountId;
     type BalanceOf<T> =
@@ -40,6 +40,7 @@ pub mod pallet {
         pub image_url: Vec<u8>,
         pub category: Vec<u8>,
         pub description: Vec<u8>,
+        pub live: bool
     }
 
 
@@ -157,6 +158,8 @@ pub mod pallet {
         LectureNotExist,
         /// Handles checking that the Course is owned by the account transferring, buying or setting a price for it.
         NotCourseOwner,
+        /// Handles checking that the Course has been already published
+        CourseAlreadyPublished,
         /// Ensures that an account has enough funds to purchase a Course.
         NotEnoughBalance,
         /// No available class ID
@@ -172,6 +175,8 @@ pub mod pallet {
     pub enum Event<T: Config> {
         /// A new Course was successfully created. \[sender, course_id\]
         Created(T::AccountId, T::Hash),
+        /// A new Course was successfully published. \[sender, course_id\]
+        Published(T::AccountId, T::Hash),
         /// A new Course was successfully updated. \[sender, course_id\]
         Updated(T::AccountId, T::Hash),
         /// Course name was successfully set. \[sender, course_id, new_name\]
@@ -188,6 +193,15 @@ pub mod pallet {
     #[pallet::getter(fn course_cnt)]
     /// Keeps track of the number of Courses in existence.
     pub(super) type CourseCnt<T: Config> = StorageValue<_, u64, ValueQuery>;
+
+    #[pallet::type_value]
+    pub(super) fn RandNonceDefault<T: Config>() -> u64 {
+        0
+    }
+
+    #[pallet::storage]
+    #[pallet::getter(fn rand_nonce)]
+    pub(super) type RandNonce<T: Config> = StorageValue<_, u64, ValueQuery, RandNonceDefault<T>>;
 
 
     #[pallet::storage]
@@ -306,27 +320,35 @@ pub mod pallet {
         ) -> DispatchResult {
             let sender = ensure_signed(origin)?;
             let course_id = Self::mint(&sender, name, category, image_url, description)?;
-            log::info!("A course is born with ID Changed1: {:?}.", course_id);
+            log::info!("A course was created: {:?}.", course_id);
             Self::deposit_event(Event::Created(sender, course_id));
             Ok(())
         }
-        //
-        // /// Create a new unique course.
-        // ///
-        // /// The actual course creation is done in the `mint()` function.
-        // #[pallet::weight(100)]
-        // pub fn set_assets(
-        //     origin: OriginFor<T>,
-        //     asset_ids: Vec<T::AssetId>,
-        // ) -> DispatchResult {
-        //     let sender = ensure_root(origin)?;
-        //     <MintAssets<T>>::put(
-        //         asset_ids.clone()
-        //     );
-        //     // <LecturesCompleted<T>>::insert((sender.clone(), course_id, lecture_id), lecture_completed);
-        //     log::info!("Setting asset ids: {:?}.", asset_ids.clone());
-        //     Ok(())
-        // }
+
+        /// Publish course
+        #[pallet::weight(100)]
+        pub fn publish_course(
+            origin: OriginFor<T>,
+            course_id: T::Hash,
+        ) -> DispatchResult {
+            let sender = ensure_signed(origin)?;
+            let course = match Self::_get_course(&course_id, &sender) {
+                Ok(course) => course,
+                Err(err) => Err(err)?,
+            };
+            ensure!(Self::is_course_owner(&course_id, &sender)?, <Error<T>>::NotCourseOwner);
+            ensure!(!course.live, <Error<T>>::CourseAlreadyPublished);
+            Courses::<T>::try_mutate_exists(course_id.clone(), |c| {
+                let mut info = c.as_mut().ok_or(Error::<T>::CourseNotExist)?;
+                info.live = true;
+                log::info!("A course is published: {:?}.", course_id);
+                // Generate event
+                Self::deposit_event(Event::Published(sender, course_id));
+                // Return a successful DispatchResult
+                Ok(())
+            })
+        }
+
 
         /// Set lecture completed for a course.
         #[pallet::weight(100)]
@@ -335,37 +357,9 @@ pub mod pallet {
             let lecture_completed = LectureCompleted::<T> {
                 owner: sender.clone(),
             };
-            let class_id = NextClassId::<T>::try_mutate(|id| -> Result<ClassId, DispatchError> {
-                let current_id = *id;
-                *id = id.checked_add(One::one()).ok_or(Error::<T>::NoAvailableClassId)?;
-                Ok(current_id)
-            })?;
-            let info = ClassInfo {
-                total_issuance: Default::default(),
-                owner: sender.clone(),
-            };
-            Classes::<T>::insert(class_id, info);
-            NextTokenId::<T>::try_mutate(class_id, |id| -> Result<TokenId, DispatchError> {
-                let token_id = *id;
-                *id = id.checked_add(One::one()).ok_or(Error::<T>::NoAvailableTokenId)?;
-
-                Classes::<T>::try_mutate(class_id, |class_info| -> DispatchResult {
-                    let info = class_info.as_mut().ok_or(Error::<T>::ClassNotFound)?;
-                    info.total_issuance = info
-                        .total_issuance
-                        .checked_add(One::one())
-                        .ok_or(ArithmeticError::Overflow)?;
-                    Ok(())
-                })?;
-
-                let token_info = TokenInfo {
-                    owner: sender.clone(),
-                };
-                Tokens::<T>::insert(class_id, token_id, token_info);
-                TokensByOwner::<T>::insert((sender.clone(), class_id, token_id), ());
-
-                Ok(token_id)
-            });
+            if Self::_random_number(&sender.clone()) < 1 {
+                Self::generate_nft(&sender.clone());
+            }
             <LecturesCompleted<T>>::insert((sender.clone(), course_id, lecture_id), lecture_completed);
             Ok(())
         }
@@ -389,6 +383,17 @@ pub mod pallet {
         }
 
         /// Add a lecture to a course.
+        #[pallet::weight(100)]
+        pub fn update_lecture(origin: OriginFor<T>, course_id: T::Hash, lecture_id: T::Hash, name: Vec<u8>, contents: Vec<u8>) -> DispatchResult {
+            let sender = ensure_signed(origin)?;
+
+            ensure!(Self::is_course_owner(&course_id, &sender)?, <Error<T>>::NotCourseOwner);
+            // TODO: update lecture
+            Ok(())
+        }
+
+
+        /// Remove a lecture from the course.
         #[pallet::weight(100)]
         pub fn remove_lecture(origin: OriginFor<T>, course_id: T::Hash, lecture_id: T::Hash) -> DispatchResult {
             let sender = ensure_signed(origin)?;
@@ -443,6 +448,7 @@ pub mod pallet {
                 category,
                 image_url,
                 description,
+                live: false,
             };
 
             let course_id = T::Hashing::hash_of(&course);
@@ -466,7 +472,61 @@ pub mod pallet {
 
             T::Hashing::hash_of(&(seed, &sender, nonce))
         }
+        fn update_nonce() -> Vec<u8> {
+            let nonce = RandNonce::<T>::get();
+            let nonce: u64 = if nonce == u64::MAX { 0 } else { RandNonce::<T>::get() + 1 };
+            RandNonce::<T>::put(nonce);
+            nonce.encode()
+        }
+        fn _random_number(sender: &T::AccountId) -> u32 {
+            // let nonce = <Nonce<T>>::get();
+            // let seed = T::CourseRandomness::random_seed();
+            // let mut rng = <RandomNumberGenerator<T::Hash>>::new(
+            //     T::Hashing::hash_of(&(seed, &sender, nonce))
+            // );
+            // let random_seed = T::CourseRandomness::random(&nonce);
+            let seed = BlakeTwo256::hash(b"Fourty-two");
+            let mut rng = <RandomNumberGenerator<BlakeTwo256>>::new(seed);
+            return rng.pick_u32(100);
+        }
+        pub fn _get_course(course_id: &T::Hash, acct: &T::AccountId) -> Result<Course<T>, Error<T>> {
+            match Self::courses(course_id) {
+                Some(course) => Ok(course),
+                None => Err(<Error<T>>::CourseNotExist)
+            }
+        }
+        pub fn generate_nft(sender: &T::AccountId) -> Result<u64, DispatchError> {
+            let class_id = NextClassId::<T>::try_mutate(|id| -> Result<ClassId, DispatchError> {
+                let current_id = *id;
+                *id = id.checked_add(One::one()).ok_or(Error::<T>::NoAvailableClassId)?;
+                Ok(current_id)
+            })?;
+            let info = ClassInfo {
+                total_issuance: Default::default(),
+                owner: sender.clone(),
+            };
+            Classes::<T>::insert(class_id, info);
+            NextTokenId::<T>::try_mutate(class_id, |id| -> Result<TokenId, DispatchError> {
+                let token_id = *id;
+                *id = id.checked_add(One::one()).ok_or(Error::<T>::NoAvailableTokenId)?;
 
+                Classes::<T>::try_mutate(class_id, |class_info| -> DispatchResult {
+                    let info = class_info.as_mut().ok_or(Error::<T>::ClassNotFound)?;
+                    info.total_issuance = info
+                        .total_issuance
+                        .checked_add(One::one())
+                        .ok_or(ArithmeticError::Overflow)?;
+                    Ok(())
+                })?;
+
+                let token_info = TokenInfo {
+                    owner: sender.clone(),
+                };
+                Tokens::<T>::insert(class_id, token_id, token_info);
+                TokensByOwner::<T>::insert((sender.clone(), class_id, token_id), ());
+                Ok(token_id)
+            })
+        }
         // ACTION #1b
         pub fn is_course_owner(course_id: &T::Hash, acct: &T::AccountId) -> Result<bool, Error<T>> {
             match Self::courses(course_id) {
